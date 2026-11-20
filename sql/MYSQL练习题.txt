@@ -1,0 +1,198 @@
+1. Q1. 查 2025 年 11 月的订单，按金额从高到低取前 20 条
+select o.customer_id,o.amount,o.order_date
+from orders o
+where o.order_date like"2025-11%"
+order by o.amount desc
+limit 0,20;
+
+2.Q2. 全店核心指标：订单数、总销售额、客单价、毛利率
+SELECT count(*) "订单数",round(sum(o.amount),0) "总销售额",round(sum(o.amount)/count(*),0) "客单价",round(sum(o.profit)/sum(o.amount),2) "毛利率"
+from orders o;
+
+3.Q3. 各渠道的订单数、销售额、销售额占比
+select  o.channel "渠道",count(*) "订单数",round(sum(o.amount),0) "销售额",round(sum(o.amount)/(select sum(amount) from orders)*100,1) "销售额占比"
+from orders o
+GROUP BY o.channel;
+
+4.销售额 Top 10 商品
+SELECT o.product_id,o.product_name,COUNT(*) "订单数",round(sum(o.amount),0) "销售额"
+from orders o
+GROUP BY o.product_name,o.product_id
+order by sum(o.amount) DESC
+limit 0,10;
+
+5.各大区的销售额与客单价
+select o.region,round(sum(o.amount),0) "销售额",ROUND(sum(o.amount)/count(*),0) "客单价"
+from orders o
+GROUP BY o.region
+ORDER BY "销售额";
+
+6.月度销售额 + 环比增长率
+select o.`month`,round(sum(o.amount),0) "销售额",round((SUM(o.amount)-LAG(sum(o.amount)) over (ORDER BY `month`))/LAG(sum(o.amount)) over (ORDER BY `month`)*100,1) "环比百分比"
+from orders o
+GROUP BY o.`month`
+ORDER BY o.`month`;
+
+7.每个品类内部，商品按销售额排名
+select * from(
+select o.category,o.product_name,round(sum(o.amount),0),ROW_NUMBER() over (PARTITION by o.category order by sum(o.amount) DESC) "品类内排名"
+from orders o
+GROUP BY o.category,o.product_name) s
+where 品类内排名<=3
+ORDER BY category,"品类内排名";
+
+8.每月销售额及全年累计销售额
+select o.`month`,round(SUM(o.amount),0) "月总销售额",round(sum(sum(o.amount)) over (ORDER BY `month`),0 )"年总销售额"
+from orders o
+GROUP BY o.`month`
+ORDER BY o.`month`;
+
+9.每月客单价变化
+select o.`month`,COUNT(*) "订单数",ROUND(sum(o.amount)/count(*),0) "客单价"
+from orders o
+GROUP BY o.`month`
+order by 客单价 DESC;
+
+10.订单表 JOIN 商品表，校验「订单里的单价 = 商品标价」，并算实际毛利
+SELECT count(*) "总订单数",sum(case when o.unit_price!=p.list_price then 1 ELSE 0 END) "单价不一致条数",ROUND(sum(o.amount-o.cost),2) "实际毛利"
+from orders o 
+left OUTER join products p
+on o.unit_price=p.list_price;
+
+11.Q11. 渠道 × 品类 交叉透视表
+SELECT channel,
+       ROUND(SUM(CASE WHEN category = '耳机'     THEN amount ELSE 0 END), 0) AS 耳机,
+       ROUND(SUM(CASE WHEN category = '音箱'     THEN amount ELSE 0 END), 0) AS 音箱,
+       ROUND(SUM(CASE WHEN category = '移动电源' THEN amount ELSE 0 END), 0) AS 移动电源,
+       ROUND(SUM(CASE WHEN category = '充电器'   THEN amount ELSE 0 END), 0) AS 充电器,
+       ROUND(SUM(CASE WHEN category = '数据线'   THEN amount ELSE 0 END), 0) AS 数据线
+FROM orders
+GROUP BY channel
+ORDER BY sum(amount) DESC;
+
+12.找出全年「一笔订单都没有」的商品
+SELECT p.category,p.product_id,p.product_name
+from orders o
+RIGHT OUTER JOIN products p
+ON o.product_name=p.product_name
+WHERE o.order_id IS NULL;
+
+13. 库存周转分析
+SELECT t.product_id,
+       ROUND(t.avg_qty, 0)                        AS 平均库存数量,
+       ROUND(t.avg_stock_val, 0)                  AS 平均存货金额,
+       ROUND(t.cogs, 0)                           AS 年度营业成本,
+       ROUND(t.cogs / t.avg_stock_val, 2)         AS 周转次数,
+       ROUND(365 / (t.cogs / t.avg_stock_val), 1) AS 周转天数
+FROM (
+    SELECT i.product_id,
+           AVG(i.stock_qty)            AS avg_qty,
+           AVG(i.stock_qty * p.cost)   AS avg_stock_val,
+           (SELECT SUM(o.cost) FROM orders o
+             WHERE o.product_id = i.product_id) AS cogs
+    FROM inventory i
+    JOIN products p ON i.product_id = p.product_id
+    GROUP BY i.product_id
+) t
+ORDER BY 周转天数 DESC;
+
+14.各品类销售额占全店比重
+select o.category,round(sum(o.amount) ,0) "总销售额",ROUND(sum(o.amount)/SUM(sum(o.amount)) over ()*100,2) "占全店比重"
+from orders o
+GROUP BY o.category
+ORDER BY 占全店比重 DESC;
+
+15.每个月销售额 Top 3 的商品
+SELECT * from(select `month`,o.product_name,round(sum(o.amount),0) "销售额",ROW_NUMBER() over (PARTITION by o.`month` ORDER BY sum(o.amount)) "销售额排名"
+from orders o
+GROUP BY o.`month`,o.product_name) t
+WHERE 销售额排名<=3
+ORDER BY `month`,销售额排名;
+
+16. 大促月（6 月、11 月）vs 平销月 的对比
+SELECT CASE WHEN o.`month` in ('2025-06','2025-11') THEN '促销月' ELSE '平销月' END as 月份类型,
+COUNT(DISTINCT o.`month`) as 月份数,count(*) as 订单数,ROUND(SUM(o.amount),0) as 销售额,ROUND(SUM(o.amount)/COUNT(DISTINCT o.`month`),0) as 月均销售量,ROUND(SUM(o.amount)/count(*),0) as 客单价
+from orders o
+GROUP BY 月份类型;
+
+17.客户复购分析：下单次数分布，cte
+with abc AS(
+select o.customer_id,count(*) "下单次数",round(sum(amount),0) "累计金额"
+FROM orders o
+GROUP BY o.customer_id
+)
+SELECT CASE WHEN 下单次数 = 1 THEN '1 单（一次性）'
+            WHEN 下单次数 BETWEEN 2 AND 5 THEN '2-5 单'
+            WHEN 下单次数 BETWEEN 6 AND 10 THEN '6-10 单'
+            ELSE '10 单以上' END AS 客户分层,
+       COUNT(*)     AS 客户数,
+       SUM(累计金额) AS 该层总金额
+FROM abc
+GROUP BY 客户分层
+ORDER BY 客户数 DESC;
+
+18.客户价值分层
+WITH c AS (
+    SELECT customer_id,
+           COUNT(*)             AS F_频次,
+           ROUND(SUM(amount), 0) AS M_金额,
+           MAX(order_date)      AS 最近购买日
+    FROM orders
+    GROUP BY customer_id
+)
+SELECT customer_id, F_频次, M_金额, 最近购买日,
+       CASE WHEN F_频次 >= 7 AND M_金额 >= 3000 THEN '高价值'
+            WHEN F_频次 >= 4 THEN '潜力客户'
+            ELSE '普通/流失预警' END AS 客户标签
+FROM c
+ORDER BY M_金额 DESC
+LIMIT 30;
+
+19.每个客户的「复购间隔天数」平均值
+SELECT ROUND(AVG(间隔天数), 1) AS 平均复购间隔天数 FROM (
+    SELECT customer_id,
+           DATEDIFF(order_date,
+                    LAG(order_date) OVER (PARTITION BY customer_id ORDER BY order_date)) AS 间隔天数
+    FROM orders
+) t
+WHERE 间隔天数 IS NOT NULL;
+
+20.用「3 个月移动平均」做简单的需求预测
+SELECT month,
+       ROUND(SUM(amount), 0) AS 实际销售额,
+       ROUND(AVG(SUM(amount)) OVER (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 0) AS 三月移动均值
+FROM orders
+GROUP BY month
+ORDER BY month;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
